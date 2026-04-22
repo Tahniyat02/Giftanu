@@ -119,7 +119,6 @@
 		$overlay.on('click', closeModal);
 		$(document).on('keydown', function(e){ if(e.key==='Escape') closeModal(); });
 
-		$uploadArea.on('click', function(){ $fileInput.trigger('click'); });
 		$fileInput.on('change', function(){ if(this.files[0]) readFile(this.files[0]); });
 
 		$uploadArea
@@ -127,10 +126,12 @@
 				e.preventDefault();
 				$(this).addClass('arrp-drag-over');
 			})
-			.on('dragleave drop', function(e){
+			.on('dragleave', function(){ $(this).removeClass('arrp-drag-over'); })
+			.on('drop', function(e){
 				e.preventDefault();
 				$(this).removeClass('arrp-drag-over');
-				if (e.type==='drop') readFile(e.originalEvent.dataTransfer.files[0]);
+				var files = e.originalEvent.dataTransfer.files;
+				if(files && files[0]) readFile(files[0]);
 			});
 
 		$resetBtn.on('click', resetUpload);

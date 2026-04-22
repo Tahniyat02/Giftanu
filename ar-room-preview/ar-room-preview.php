@@ -59,12 +59,12 @@ function arrp_modal() {
 			<h2 class="arrp-modal-title">Preview Product in Your Room</h2>
 
 			<div id="arrp-step-upload" class="arrp-step">
-				<div class="arrp-upload-area" id="arrp-upload-area">
-					<input type="file" id="arrp-file-input" accept="image/*" style="display:none;">
+				<label class="arrp-upload-area" id="arrp-upload-area" for="arrp-file-input">
+					<input type="file" id="arrp-file-input" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
 					<div class="arrp-upload-icon">&#128247;</div>
 					<p>Click or drag &amp; drop your room photo here</p>
 					<span class="arrp-upload-hint">JPG, PNG or WEBP &mdash; max 10 MB</span>
-				</div>
+				</label>
 			</div>
 
 			<div id="arrp-step-preview" class="arrp-step" style="display:none;">
