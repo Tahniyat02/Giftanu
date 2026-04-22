@@ -40,7 +40,7 @@ class AR_Room_Preview {
 			true
 		);
 
-		global $product;
+		$product = wc_get_product( get_the_ID() );
 		$data = array(
 			'ajaxUrl'         => admin_url( 'admin-ajax.php' ),
 			'productId'       => get_the_ID(),
@@ -188,10 +188,14 @@ class AR_Room_Preview {
 		if ( ! $variation ) {
 			wp_send_json_error();
 		}
-		$image_id  = $variation->get_image_id();
-		$image_url = $image_id
-			? wp_get_attachment_image_url( $image_id, 'full' )
-			: wp_get_attachment_image_url( wc_get_product( $variation->get_parent_id() )->get_image_id(), 'full' );
+		$image_id = $variation->get_image_id();
+		if ( ! $image_id ) {
+			$parent = wc_get_product( $variation->get_parent_id() );
+			if ( $parent ) {
+				$image_id = $parent->get_image_id();
+			}
+		}
+		$image_url = $image_id ? wp_get_attachment_image_url( $image_id, 'full' ) : '';
 		wp_send_json_success( array( 'imageUrl' => $image_url ) );
 	}
 
