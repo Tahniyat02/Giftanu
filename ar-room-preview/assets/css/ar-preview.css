@@ -1,0 +1,305 @@
+/* ============================================================
+   AR Room Preview – Main Stylesheet
+   ============================================================ */
+
+/* ---------- Trigger button ---------- */
+.arrp-open-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 12px;
+	padding: 12px 22px;
+	background: #2c2c2c;
+	color: #fff;
+	font-size: 14px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.2s, transform 0.1s;
+}
+.arrp-open-btn:hover { background: #444; }
+.arrp-open-btn:active { transform: scale(0.97); }
+.arrp-open-btn::before {
+	content: "🛋️";
+	font-size: 18px;
+	line-height: 1;
+}
+
+/* ---------- Modal backdrop ---------- */
+.arrp-modal {
+	position: fixed;
+	inset: 0;
+	z-index: 999999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	box-sizing: border-box;
+}
+.arrp-modal-overlay {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.72);
+	cursor: pointer;
+}
+
+/* ---------- Modal box ---------- */
+.arrp-modal-box {
+	position: relative;
+	z-index: 1;
+	background: #fff;
+	border-radius: 12px;
+	padding: 32px 28px 28px;
+	width: 100%;
+	max-width: 820px;
+	max-height: 92vh;
+	overflow-y: auto;
+	box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+	animation: arrpFadeIn 0.22s ease-out;
+}
+@keyframes arrpFadeIn {
+	from { opacity: 0; transform: translateY(18px) scale(0.97); }
+	to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---------- Close button ---------- */
+.arrp-close-btn {
+	position: absolute;
+	top: 14px;
+	right: 16px;
+	background: none;
+	border: none;
+	font-size: 20px;
+	line-height: 1;
+	color: #666;
+	cursor: pointer;
+	padding: 4px 8px;
+	border-radius: 4px;
+	transition: color 0.15s, background 0.15s;
+}
+.arrp-close-btn:hover { color: #111; background: #f2f2f2; }
+
+/* ---------- Title ---------- */
+.arrp-modal-title {
+	margin: 0 0 20px;
+	font-size: 20px;
+	font-weight: 700;
+	color: #1a1a1a;
+	text-align: center;
+}
+
+/* ---------- Upload area ---------- */
+.arrp-upload-area {
+	border: 2px dashed #ccc;
+	border-radius: 10px;
+	padding: 52px 24px;
+	text-align: center;
+	cursor: pointer;
+	transition: border-color 0.2s, background 0.2s;
+	background: #fafafa;
+}
+.arrp-upload-area:hover,
+.arrp-upload-area.arrp-drag-over {
+	border-color: #333;
+	background: #f3f3f3;
+}
+.arrp-upload-icon {
+	font-size: 52px;
+	margin-bottom: 12px;
+	line-height: 1;
+}
+.arrp-upload-area p {
+	margin: 0 0 6px;
+	font-size: 15px;
+	font-weight: 500;
+	color: #333;
+}
+.arrp-upload-hint {
+	font-size: 12px;
+	color: #999;
+}
+
+/* ---------- Canvas / Preview area ---------- */
+.arrp-canvas-wrap {
+	position: relative;
+	width: 100%;
+	background: #111;
+	border-radius: 8px;
+	overflow: hidden;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+}
+#arrp-canvas {
+	display: block;
+	width: 100%;
+	height: auto;
+	opacity: 0; /* canvas is behind the CSS-layer overlay; kept for download */
+	position: absolute;
+	top: 0;
+	left: 0;
+	pointer-events: none;
+}
+/* Room background displayed via CSS on the wrapper */
+.arrp-canvas-wrap .arrp-room-bg {
+	display: block;
+	width: 100%;
+	height: auto;
+	max-height: 55vh;
+	object-fit: contain;
+}
+
+/* ---------- Draggable product handle ---------- */
+.arrp-product-handle {
+	position: absolute;
+	cursor: grab;
+	touch-action: none;
+	border: 2px dashed transparent;
+	border-radius: 4px;
+	transition: border-color 0.15s;
+	box-sizing: border-box;
+}
+.arrp-product-handle:hover,
+.arrp-product-handle.arrp-active {
+	border-color: rgba(255,255,255,0.7);
+}
+.arrp-product-handle img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	pointer-events: none;
+	border-radius: 2px;
+}
+
+/* ---------- Resize handles ---------- */
+.arrp-resize-handle {
+	position: absolute;
+	width: 14px;
+	height: 14px;
+	background: #fff;
+	border: 2px solid #555;
+	border-radius: 3px;
+	z-index: 10;
+	opacity: 0;
+	transition: opacity 0.15s;
+}
+.arrp-product-handle:hover .arrp-resize-handle,
+.arrp-product-handle.arrp-active .arrp-resize-handle { opacity: 1; }
+.arrp-resize-se { bottom: -7px; right: -7px; cursor: se-resize; }
+.arrp-resize-sw { bottom: -7px; left:  -7px; cursor: sw-resize; }
+.arrp-resize-ne { top:    -7px; right: -7px; cursor: ne-resize; }
+.arrp-resize-nw { top:    -7px; left:  -7px; cursor: nw-resize; }
+
+/* ---------- Colour swatches ---------- */
+.arrp-swatches-wrap {
+	margin-top: 18px;
+}
+.arrp-swatches-label {
+	font-size: 13px;
+	font-weight: 600;
+	color: #444;
+	margin: 0 0 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+.arrp-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+.arrp-swatch {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 5px;
+	cursor: pointer;
+}
+.arrp-swatch-circle {
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	border: 3px solid #e0e0e0;
+	transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+	box-sizing: border-box;
+}
+.arrp-swatch:hover .arrp-swatch-circle {
+	transform: scale(1.12);
+	border-color: #888;
+}
+.arrp-swatch.arrp-swatch-active .arrp-swatch-circle {
+	border-color: #111;
+	box-shadow: 0 0 0 2px #fff, 0 0 0 4px #111;
+	transform: scale(1.1);
+}
+.arrp-swatch-name {
+	font-size: 11px;
+	color: #555;
+	text-align: center;
+	max-width: 52px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ---------- Controls row ---------- */
+.arrp-controls {
+	display: flex;
+	gap: 12px;
+	margin-top: 18px;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+}
+.arrp-btn {
+	padding: 10px 20px;
+	font-size: 14px;
+	font-weight: 600;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: opacity 0.15s, transform 0.1s;
+}
+.arrp-btn:active { transform: scale(0.97); }
+.arrp-btn-primary  { background: #2c2c2c; color: #fff; }
+.arrp-btn-primary:hover  { background: #444; }
+.arrp-btn-secondary { background: #f0f0f0; color: #333; }
+.arrp-btn-secondary:hover { background: #e0e0e0; }
+
+/* ---------- Loading overlay ---------- */
+.arrp-loading {
+	position: absolute;
+	inset: 0;
+	background: rgba(255,255,255,0.75);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 8px;
+	z-index: 20;
+}
+.arrp-spinner {
+	width: 38px;
+	height: 38px;
+	border: 4px solid #ddd;
+	border-top-color: #333;
+	border-radius: 50%;
+	animation: arrpSpin 0.7s linear infinite;
+}
+@keyframes arrpSpin { to { transform: rotate(360deg); } }
+
+/* ---------- Tooltip hint ---------- */
+.arrp-hint {
+	text-align: center;
+	font-size: 12px;
+	color: #888;
+	margin-top: 8px;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 540px) {
+	.arrp-modal-box { padding: 20px 14px 18px; }
+	.arrp-modal-title { font-size: 16px; }
+	.arrp-swatch-circle { width: 30px; height: 30px; }
+	.arrp-controls { justify-content: center; }
+}
