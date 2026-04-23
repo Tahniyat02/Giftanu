@@ -46,14 +46,22 @@
 	});
 
 	/* ================================================================
-	   Background Removal via Canvas pixel processing
-	   Samples corners to find bg colour, removes similar pixels
+	   Background Removal — Flood Fill from image edges
+	   Only removes pixels CONNECTED to the border, never touches
+	   interior product pixels even if they are a similar colour.
 	================================================================= */
 	function removeBg(imgEl, onDone) {
+		var MAX_DIM = 800;   // work on a scaled copy for speed
+		var natW = imgEl.naturalWidth  || imgEl.width  || 300;
+		var natH = imgEl.naturalHeight || imgEl.height || 300;
+
+		/* Scale down if very large */
+		var scale = Math.min(1, MAX_DIM / Math.max(natW, natH));
+		var w = Math.round(natW * scale);
+		var h = Math.round(natH * scale);
+
 		var oc  = document.createElement('canvas');
 		var oct = oc.getContext('2d');
-		var w   = imgEl.naturalWidth  || imgEl.width  || 300;
-		var h   = imgEl.naturalHeight || imgEl.height || 300;
 		oc.width = w; oc.height = h;
 
 		try {
@@ -61,45 +69,82 @@
 			var imgData = oct.getImageData(0, 0, w, h);
 			var d       = imgData.data;
 
-			/* Sample the four corners (5×5 area each) to detect background colour */
-			var samples = [];
-			var add = function(px, py) {
-				for (var dy=0; dy<5; dy++) for (var dx=0; dx<5; dx++) {
-					var ix = Math.min(px+dx, w-1), iy = Math.min(py+dy, h-1);
-					var i4 = (iy*w + ix)*4;
-					if (d[i4+3] > 200) samples.push([d[i4], d[i4+1], d[i4+2]]);
-				}
-			};
-			add(0,0); add(w-5,0); add(0,h-5); add(w-5,h-5);
+			/* ---- 1. Detect background colour from corners ---- */
+			function px(x, y){ return (y * w + x) * 4; }
+			function colAt(x, y){ var i=px(x,y); return [d[i],d[i+1],d[i+2]]; }
 
-			if (!samples.length) { onDone(null); return; }
-
-			/* Average bg colour */
+			var cornerSamples = [
+				colAt(0,0), colAt(w-1,0), colAt(0,h-1), colAt(w-1,h-1)
+			];
 			var bgR=0, bgG=0, bgB=0;
-			samples.forEach(function(s){ bgR+=s[0]; bgG+=s[1]; bgB+=s[2]; });
-			bgR=Math.round(bgR/samples.length);
-			bgG=Math.round(bgG/samples.length);
-			bgB=Math.round(bgB/samples.length);
+			cornerSamples.forEach(function(c){ bgR+=c[0]; bgG+=c[1]; bgB+=c[2]; });
+			bgR=Math.round(bgR/4); bgG=Math.round(bgG/4); bgB=Math.round(bgB/4);
 
-			/* Only apply if bg is clearly light (white/grey/cream product photos) */
 			var brightness = (bgR*299 + bgG*587 + bgB*114) / 1000;
-			var THRESH = brightness > 180 ? 55 : 35;  // stricter for darker bgs
 
-			for (var i=0; i<d.length; i+=4) {
-				var dr=d[i]-bgR, dg=d[i+1]-bgG, db=d[i+2]-bgB;
-				var dist = Math.sqrt(dr*dr + dg*dg + db*db);
-				if (dist < THRESH) {
-					d[i+3] = 0;
-				} else if (dist < THRESH + 25) {
-					/* Feathered edge for smooth border */
-					d[i+3] = Math.round((dist - THRESH) / 25 * d[i+3]);
-				}
+			/* Only proceed if bg looks like a solid studio background (light or neutral) */
+			if (brightness < 100) {
+				/* Dark background — skip removal, product likely on dark surface */
+				onDone(null); return;
 			}
+
+			var THRESH = 50;   /* colour distance tolerance */
+
+			function dist(x, y){
+				var i=px(x,y);
+				var dr=d[i]-bgR, dg=d[i+1]-bgG, db=d[i+2]-bgB;
+				return Math.sqrt(dr*dr + dg*dg + db*db);
+			}
+
+			/* ---- 2. BFS flood fill starting from ALL edge pixels ---- */
+			var visited = new Uint8Array(w * h);
+			var queue   = [];
+			var qi      = 0;
+
+			function enqueue(x, y){
+				if (x<0||x>=w||y<0||y>=h) return;
+				var idx = y*w+x;
+				if (visited[idx]) return;
+				if (dist(x,y) > THRESH) return;   /* not bg colour → product pixel, stop */
+				visited[idx] = 1;
+				queue.push(x, y);                 /* push x,y as flat pairs for speed */
+			}
+
+			/* Seed all four edges */
+			for (var ex=0; ex<w; ex++){ enqueue(ex,0); enqueue(ex,h-1); }
+			for (var ey=0; ey<h; ey++){ enqueue(0,ey); enqueue(w-1,ey); }
+
+			/* BFS */
+			while (qi < queue.length) {
+				var bx = queue[qi++], by = queue[qi++];
+				var i4 = (by*w+bx)*4;
+				var d_  = dist(bx,by);
+
+				if (d_ < THRESH - 10) {
+					d[i4+3] = 0;                    /* fully transparent */
+				} else {
+					/* soft feathered edge */
+					d[i4+3] = Math.round((d_ - (THRESH-10)) / 10 * d[i4+3]);
+				}
+
+				enqueue(bx+1,by); enqueue(bx-1,by);
+				enqueue(bx,by+1); enqueue(bx,by-1);
+			}
+
 			oct.putImageData(imgData, 0, 0);
-			onDone(oc.toDataURL('image/png'));
+
+			/* If we scaled down, re-draw result at natural size */
+			if (scale < 1) {
+				var full  = document.createElement('canvas');
+				full.width = natW; full.height = natH;
+				full.getContext('2d').drawImage(oc, 0, 0, natW, natH);
+				onDone(full.toDataURL('image/png'));
+			} else {
+				onDone(oc.toDataURL('image/png'));
+			}
+
 		} catch(e) {
-			/* CORS or other error — use original */
-			onDone(null);
+			onDone(null);   /* CORS / security error — use original image */
 		}
 	}
 
