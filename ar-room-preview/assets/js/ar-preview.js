@@ -1,26 +1,25 @@
 (function ($) {
 	'use strict';
 
-	/* ── state ── */
-	var roomDataUrl      = null;
-	var roomNatW         = 0, roomNatH = 0;
-	var productImgUrl    = (window.ARRP && ARRP.productImageUrl) ? ARRP.productImageUrl : '';
-	var processedProdUrl = '';   // bg-removed version
-	var handle           = { x:0, y:0, w:0, h:0 };
-	var drag             = { on:false, mx:0, my:0, sx:0, sy:0 };
-	var rsz              = { on:false, dir:'', mx:0, my:0, sx:0, sy:0, sw:0, sh:0 };
-	var MIN              = 40;
+	var cfg            = window.ARRP || {};
+	var productImgUrl  = cfg.productImageUrl || '';
+	var processedUrls  = {};   /* cache: original url → bg-removed url */
+	var roomDataUrl    = null;
+	var roomNatW       = 0, roomNatH = 0;
+	var handle         = { x:0, y:0, w:0, h:0 };
+	var drag           = { on:false, mx:0, my:0, sx:0, sy:0 };
+	var rsz            = { on:false, dir:'', mx:0, my:0, sx:0, sy:0, sw:0, sh:0 };
+	var MIN            = 40;
 
-	/* ── dom ── */
-	var $modal, $overlay, $openBtn, $closeBtn,
-	    $stepUpload, $stepPreview,
-	    $fileInput, $cameraInput,
-	    $canvasWrap, canvas, ctx,
-	    $handle, $productImg, $shadow,
-	    $swatchesWrap, $swatches,
-	    $resetBtn, $downloadBtn;
+	var $modal,$overlay,$openBtn,$closeBtn,
+	    $stepUpload,$stepPreview,
+	    $fileInput,$cameraInput,
+	    $canvasWrap,canvas,ctx,
+	    $handle,$productImg,$shadow,$dragHint,
+	    $swatchesWrap,$swatches,
+	    $resetBtn,$downloadBtn;
 
-	$(function () {
+	$(function(){
 		$modal        = $('#arrp-modal');
 		$overlay      = $('#arrp-overlay');
 		$openBtn      = $('#arrp-open-btn');
@@ -35,6 +34,7 @@
 		$handle       = $('#arrp-product-handle');
 		$productImg   = $('#arrp-product-img');
 		$shadow       = $('#arrp-product-shadow');
+		$dragHint     = $('#arrp-drag-hint');
 		$swatchesWrap = $('#arrp-swatches-wrap');
 		$swatches     = $('#arrp-swatches');
 		$resetBtn     = $('#arrp-reset-btn');
@@ -43,446 +43,376 @@
 		if (!$modal.length) return;
 		bindEvents();
 		readSwatches();
+
+		/* Pre-process the default product image in background */
+		if (productImgUrl) prepareImage(productImgUrl, function(){});
 	});
 
 	/* ================================================================
-	   Background Removal — Flood Fill from image edges
-	   Only removes pixels CONNECTED to the border, never touches
-	   interior product pixels even if they are a similar colour.
+	   Image preparation: remove.bg API → local fallback → original
 	================================================================= */
-	function removeBg(imgEl, onDone) {
-		var MAX_DIM = 800;   // work on a scaled copy for speed
-		var natW = imgEl.naturalWidth  || imgEl.width  || 300;
-		var natH = imgEl.naturalHeight || imgEl.height || 300;
+	function prepareImage(url, cb) {
+		if (processedUrls[url]) { cb(processedUrls[url]); return; }
 
-		/* Scale down if very large */
-		var scale = Math.min(1, MAX_DIM / Math.max(natW, natH));
-		var w = Math.round(natW * scale);
-		var h = Math.round(natH * scale);
-
-		var oc  = document.createElement('canvas');
-		var oct = oc.getContext('2d');
-		oc.width = w; oc.height = h;
-
-		try {
-			oct.drawImage(imgEl, 0, 0, w, h);
-			var imgData = oct.getImageData(0, 0, w, h);
-			var d       = imgData.data;
-
-			/* ---- 1. Detect background colour from corners ---- */
-			function px(x, y){ return (y * w + x) * 4; }
-			function colAt(x, y){ var i=px(x,y); return [d[i],d[i+1],d[i+2]]; }
-
-			var cornerSamples = [
-				colAt(0,0), colAt(w-1,0), colAt(0,h-1), colAt(w-1,h-1)
-			];
-			var bgR=0, bgG=0, bgB=0;
-			cornerSamples.forEach(function(c){ bgR+=c[0]; bgG+=c[1]; bgB+=c[2]; });
-			bgR=Math.round(bgR/4); bgG=Math.round(bgG/4); bgB=Math.round(bgB/4);
-
-			var brightness = (bgR*299 + bgG*587 + bgB*114) / 1000;
-
-			/* Only proceed if bg looks like a solid studio background (light or neutral) */
-			if (brightness < 100) {
-				/* Dark background — skip removal, product likely on dark surface */
-				onDone(null); return;
-			}
-
-			var THRESH = 50;   /* colour distance tolerance */
-
-			function dist(x, y){
-				var i=px(x,y);
-				var dr=d[i]-bgR, dg=d[i+1]-bgG, db=d[i+2]-bgB;
-				return Math.sqrt(dr*dr + dg*dg + db*db);
-			}
-
-			/* ---- 2. BFS flood fill starting from ALL edge pixels ---- */
-			var visited = new Uint8Array(w * h);
-			var queue   = [];
-			var qi      = 0;
-
-			function enqueue(x, y){
-				if (x<0||x>=w||y<0||y>=h) return;
-				var idx = y*w+x;
-				if (visited[idx]) return;
-				if (dist(x,y) > THRESH) return;   /* not bg colour → product pixel, stop */
-				visited[idx] = 1;
-				queue.push(x, y);                 /* push x,y as flat pairs for speed */
-			}
-
-			/* Seed all four edges */
-			for (var ex=0; ex<w; ex++){ enqueue(ex,0); enqueue(ex,h-1); }
-			for (var ey=0; ey<h; ey++){ enqueue(0,ey); enqueue(w-1,ey); }
-
-			/* BFS */
-			while (qi < queue.length) {
-				var bx = queue[qi++], by = queue[qi++];
-				var i4 = (by*w+bx)*4;
-				var d_  = dist(bx,by);
-
-				if (d_ < THRESH - 10) {
-					d[i4+3] = 0;                    /* fully transparent */
-				} else {
-					/* soft feathered edge */
-					d[i4+3] = Math.round((d_ - (THRESH-10)) / 10 * d[i4+3]);
-				}
-
-				enqueue(bx+1,by); enqueue(bx-1,by);
-				enqueue(bx,by+1); enqueue(bx,by-1);
-			}
-
-			oct.putImageData(imgData, 0, 0);
-
-			/* If we scaled down, re-draw result at natural size */
-			if (scale < 1) {
-				var full  = document.createElement('canvas');
-				full.width = natW; full.height = natH;
-				full.getContext('2d').drawImage(oc, 0, 0, natW, natH);
-				onDone(full.toDataURL('image/png'));
-			} else {
-				onDone(oc.toDataURL('image/png'));
-			}
-
-		} catch(e) {
-			onDone(null);   /* CORS / security error — use original image */
+		/* Try remove.bg via server-side AJAX proxy */
+		if (cfg.hasRemoveBgKey && cfg.ajaxUrl) {
+			$.ajax({
+				url    : cfg.ajaxUrl,
+				method : 'POST',
+				data   : { action:'arrp_removebg', nonce:cfg.nonce, imageUrl:url },
+				timeout: 25000,
+				success: function(res){
+					if (res.success && res.data && res.data.url) {
+						processedUrls[url] = res.data.url;
+						cb(res.data.url);
+					} else {
+						localRemoveBg(url, cb);
+					}
+				},
+				error: function(){ localRemoveBg(url, cb); }
+			});
+		} else {
+			localRemoveBg(url, cb);
 		}
 	}
 
 	/* ================================================================
-	   Load product image, remove background, store processed URL
+	   Local fallback: flood-fill background removal via Canvas
+	   Starts from all 4 edges and removes only edge-connected bg pixels.
+	   Interior product pixels are never touched.
 	================================================================= */
-	function loadProductImage(url, onReady) {
+	function localRemoveBg(url, cb) {
 		var img = new Image();
 		img.crossOrigin = 'anonymous';
-		img.onload = function() {
-			removeBg(img, function(processedUrl) {
-				processedProdUrl = processedUrl || url;
-				$productImg.attr('src', processedProdUrl);
-				if (onReady) onReady(img.naturalWidth, img.naturalHeight);
-			});
+		img.onload = function(){
+			var MAX = 800;
+			var nw  = img.naturalWidth, nh = img.naturalHeight;
+			var sc  = Math.min(1, MAX / Math.max(nw, nh));
+			var w   = Math.round(nw*sc), h = Math.round(nh*sc);
+
+			var oc  = document.createElement('canvas');
+			oc.width=w; oc.height=h;
+			var oct = oc.getContext('2d');
+
+			try {
+				oct.drawImage(img, 0, 0, w, h);
+				var id = oct.getImageData(0,0,w,h);
+				var d  = id.data;
+
+				/* Average corner colours → background colour */
+				function col(x,y){ var i=(y*w+x)*4; return [d[i],d[i+1],d[i+2]]; }
+				var c = [col(0,0),col(w-1,0),col(0,h-1),col(w-1,h-1)];
+				var bR=0,bG=0,bB=0;
+				c.forEach(function(p){bR+=p[0];bG+=p[1];bB+=p[2];});
+				bR=Math.round(bR/4); bG=Math.round(bG/4); bB=Math.round(bB/4);
+
+				var bright = (bR*299+bG*587+bB*114)/1000;
+				if (bright < 90) { processedUrls[url]=url; cb(url); return; } /* dark bg — skip */
+
+				var T = 50;
+				function dist(x,y){ var i=(y*w+x)*4,dr=d[i]-bR,dg=d[i+1]-bG,db=d[i+2]-bB; return Math.sqrt(dr*dr+dg*dg+db*db); }
+
+				var vis = new Uint8Array(w*h);
+				var q   = [], qi = 0;
+
+				function en(x,y){
+					if(x<0||x>=w||y<0||y>=h) return;
+					var idx=y*w+x;
+					if(vis[idx]) return;
+					if(dist(x,y)>T) return;
+					vis[idx]=1; q.push(x,y);
+				}
+				for(var ex=0;ex<w;ex++){ en(ex,0); en(ex,h-1); }
+				for(var ey=0;ey<h;ey++){ en(0,ey); en(w-1,ey); }
+
+				while(qi<q.length){
+					var bx=q[qi++],by=q[qi++];
+					var i4=(by*w+bx)*4, dv=dist(bx,by);
+					d[i4+3] = dv < T-10 ? 0 : Math.round((dv-(T-10))/10*d[i4+3]);
+					en(bx+1,by); en(bx-1,by); en(bx,by+1); en(bx,by-1);
+				}
+
+				oct.putImageData(id,0,0);
+
+				var out = oc;
+				if (sc < 1) {
+					out = document.createElement('canvas');
+					out.width=nw; out.height=nh;
+					out.getContext('2d').drawImage(oc,0,0,nw,nh);
+				}
+				var dataUrl = out.toDataURL('image/png');
+				processedUrls[url] = dataUrl;
+				cb(dataUrl);
+			} catch(e) {
+				processedUrls[url] = url;
+				cb(url);
+			}
 		};
-		img.onerror = function() {
-			processedProdUrl = url;
-			$productImg.attr('src', url);
-			if (onReady) onReady(0, 0);
-		};
+		img.onerror = function(){ processedUrls[url]=url; cb(url); };
 		img.src = url;
 	}
 
 	/* ================================================================
-	   WooCommerce variation swatches — read from page
+	   WooCommerce variation swatches
 	================================================================= */
-	function readSwatches() {
+	function readSwatches(){
 		var $form = $('form.variations_form');
-		if (!$form.length) return;
+		if(!$form.length) return;
 		var raw = $form.attr('data-product_variations');
-		if (!raw || raw === 'false') return;
+		if(!raw||raw==='false') return;
+		var vars; try{vars=JSON.parse(raw);}catch(e){return;}
+		if(!vars||!vars.length) return;
 
-		var variations;
-		try { variations = JSON.parse(raw); } catch(e) { return; }
-		if (!variations || !variations.length) return;
+		var keys = Object.keys(vars[0].attributes||{});
+		var cKey = null;
+		for(var i=0;i<keys.length;i++){ if(/colou?r|rang/i.test(keys[i])){cKey=keys[i];break;} }
+		if(!cKey) cKey=keys[0];
+		if(!cKey) return;
 
-		var attrKeys = Object.keys(variations[0].attributes || {});
-		var colorKey = null;
-		for (var i=0; i<attrKeys.length; i++) {
-			if (/colou?r|rang/i.test(attrKeys[i])) { colorKey = attrKeys[i]; break; }
-		}
-		if (!colorKey) colorKey = attrKeys[0];
-		if (!colorKey) return;
-
-		var seen=[], swatchData=[];
-		variations.forEach(function(v) {
-			var val = v.attributes[colorKey];
-			if (!val || seen.indexOf(val)!==-1) return;
+		var seen=[],data=[];
+		vars.forEach(function(v){
+			var val=v.attributes[cKey];
+			if(!val||seen.indexOf(val)!==-1) return;
 			seen.push(val);
-			var imgUrl = (v.image && (v.image.full_src||v.image.src)) || productImgUrl;
-			swatchData.push({
-				label : val.replace(/-/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}),
-				value : val,
-				imgUrl: imgUrl,
-				hex   : labelToHex(val)
-			});
+			var img=(v.image&&(v.image.full_src||v.image.src))||productImgUrl;
+			data.push({label:val.replace(/-/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}),value:val,imgUrl:img,hex:toHex(val)});
+			/* Pre-fetch bg removal for each variation image */
+			if(img && img!==productImgUrl) prepareImage(img,function(){});
 		});
 
-		if (!swatchData.length) return;
-		$swatchesWrap.show();
-		$swatches.empty();
+		if(!data.length) return;
+		$swatchesWrap.show(); $swatches.empty();
 
-		swatchData.forEach(function(s, i) {
-			var $el     = $('<div class="arrp-swatch" tabindex="0" role="button">').attr('aria-label', s.label);
-			var $circle = $('<div class="arrp-swatch-circle">').css('background', s.hex);
-			var $name   = $('<span class="arrp-swatch-name">').text(s.label);
-			$el.append($circle, $name).data('swatch', s);
-			$el.on('click keydown', function(e) {
-				if (e.type==='keydown' && e.key!=='Enter' && e.key!==' ') return;
+		data.forEach(function(s,i){
+			var $el=$('<div class="arrp-swatch" tabindex="0" role="button">').attr('aria-label',s.label);
+			$el.append($('<div class="arrp-swatch-circle">').css('background',s.hex))
+			   .append($('<span class="arrp-swatch-name">').text(s.label))
+			   .data('swatch',s);
+			$el.on('click keydown',function(e){
+				if(e.type==='keydown'&&e.key!=='Enter'&&e.key!==' ') return;
 				$swatches.find('.arrp-swatch').removeClass('arrp-swatch-active');
 				$el.addClass('arrp-swatch-active');
 				switchColour(s.imgUrl);
 			});
 			$swatches.append($el);
-			if (i===0) $el.trigger('click');
+			if(i===0) $el.trigger('click');
 		});
 	}
 
 	/* ================================================================
 	   Events
 	================================================================= */
-	function bindEvents() {
-		$openBtn.on('click', openModal);
-		$closeBtn.on('click', closeModal);
-		$overlay.on('click', closeModal);
-		$(document).on('keydown', function(e){ if(e.key==='Escape') closeModal(); });
+	function bindEvents(){
+		$openBtn.on('click',openModal);
+		$closeBtn.on('click',closeModal);
+		$overlay.on('click',closeModal);
+		$(document).on('keydown',function(e){if(e.key==='Escape')closeModal();});
 
-		$fileInput.on('change',   function(){ if(this.files[0]) readFile(this.files[0]); });
-		$cameraInput.on('change', function(){ if(this.files[0]) readFile(this.files[0]); });
+		$fileInput.on('change',  function(){if(this.files[0])readFile(this.files[0]);});
+		$cameraInput.on('change',function(){if(this.files[0])readFile(this.files[0]);});
 
 		$('#arrp-upload-area')
-			.on('dragover dragenter', function(e){ e.preventDefault(); $(this).css('border-color','#1a1a1a'); })
-			.on('dragleave',          function()  { $(this).css('border-color',''); })
-			.on('drop', function(e){
-				e.preventDefault(); $(this).css('border-color','');
-				var f = e.originalEvent.dataTransfer.files[0];
-				if(f) readFile(f);
+			.on('dragover dragenter',function(e){e.preventDefault();$(this).css('border-color','#1a1a1a');})
+			.on('dragleave',function(){$(this).css('border-color','');})
+			.on('drop',function(e){
+				e.preventDefault();$(this).css('border-color','');
+				var f=e.originalEvent.dataTransfer.files[0]; if(f)readFile(f);
 			});
 
-		$resetBtn.on('click',    resetUpload);
-		$downloadBtn.on('click', savePreview);
+		$resetBtn.on('click',resetUpload);
+		$downloadBtn.on('click',savePreview);
 
-		$handle.on('mousedown', function(e){
-			if($(e.target).hasClass('arrp-resize-handle')) return;
-			startDrag(e.clientX, e.clientY); e.preventDefault();
+		$handle.on('mousedown',function(e){
+			if($(e.target).hasClass('arrp-resize-handle'))return;
+			startDrag(e.clientX,e.clientY);e.preventDefault();
 		});
-		$handle.on('touchstart', function(e){
-			if($(e.target).hasClass('arrp-resize-handle')) return;
-			var t=e.originalEvent.touches[0]; startDrag(t.clientX,t.clientY); e.preventDefault();
+		$handle.on('touchstart',function(e){
+			if($(e.target).hasClass('arrp-resize-handle'))return;
+			var t=e.originalEvent.touches[0];startDrag(t.clientX,t.clientY);e.preventDefault();
 		},{passive:false});
-		$handle.on('mousedown', '.arrp-resize-handle', function(e){
-			startResize(e.clientX,e.clientY,$(this).data('dir')); e.stopPropagation(); e.preventDefault();
+		$handle.on('mousedown','.arrp-resize-handle',function(e){
+			startResize(e.clientX,e.clientY,$(this).data('dir'));e.stopPropagation();e.preventDefault();
 		});
-		$handle.on('touchstart', '.arrp-resize-handle', function(e){
-			var t=e.originalEvent.touches[0]; startResize(t.clientX,t.clientY,$(this).data('dir'));
-			e.stopPropagation(); e.preventDefault();
+		$handle.on('touchstart','.arrp-resize-handle',function(e){
+			var t=e.originalEvent.touches[0];startResize(t.clientX,t.clientY,$(this).data('dir'));
+			e.stopPropagation();e.preventDefault();
 		},{passive:false});
-		$(document)
-			.on('mousemove', onMove).on('mouseup', onUp)
-			.on('touchmove', function(e){
-				var t=e.originalEvent.touches[0]; onMove({clientX:t.clientX,clientY:t.clientY});
-				if(drag.on||rsz.on) e.preventDefault();
+		$(document).on('mousemove',onMove).on('mouseup',onUp)
+			.on('touchmove',function(e){
+				var t=e.originalEvent.touches[0];onMove({clientX:t.clientX,clientY:t.clientY});
+				if(drag.on||rsz.on)e.preventDefault();
 			},{passive:false})
-			.on('touchend', onUp);
+			.on('touchend',onUp);
 	}
 
-	/* ================================================================
-	   Modal open / close
-	================================================================= */
-	function openModal()  { $modal.css('display','flex'); $('body').css('overflow','hidden'); }
-	function closeModal() { $modal.hide(); $('body').css('overflow',''); }
+	function openModal(){$modal.css('display','flex');$('body').css('overflow','hidden');}
+	function closeModal(){$modal.hide();$('body').css('overflow','');}
 
 	/* ================================================================
 	   Room photo
 	================================================================= */
-	function readFile(file) {
-		if (!file || !file.type.match('image.*')) return;
-		if (file.size > 10*1024*1024) { alert('Image must be under 10 MB.'); return; }
+	function readFile(file){
+		if(!file||!file.type.match('image.*'))return;
+		if(file.size>10*1024*1024){alert('Image must be under 10 MB.');return;}
 		showSpinner(true);
-		var reader = new FileReader();
-		reader.onload = function(ev) {
-			var img = new Image();
-			img.onload = function() {
-				roomDataUrl = ev.target.result;
-				roomNatW    = img.naturalWidth;
-				roomNatH    = img.naturalHeight;
-				if(canvas){ canvas.width=roomNatW; canvas.height=roomNatH; }
+		var reader=new FileReader();
+		reader.onload=function(ev){
+			var img=new Image();
+			img.onload=function(){
+				roomDataUrl=ev.target.result;
+				roomNatW=img.naturalWidth; roomNatH=img.naturalHeight;
+				if(canvas){canvas.width=roomNatW;canvas.height=roomNatH;}
 				showPreview();
 			};
-			img.src = ev.target.result;
+			img.src=ev.target.result;
 		};
 		reader.readAsDataURL(file);
 	}
 
-	function showPreview() {
-		$stepUpload.hide();
-		$stepPreview.show();
+	function showPreview(){
+		$stepUpload.hide(); $stepPreview.show();
 		$canvasWrap.find('.arrp-room-bg').remove();
-		var $bg = $('<img class="arrp-room-bg">').attr({ src:roomDataUrl, alt:'' });
+		var $bg=$('<img class="arrp-room-bg">').attr({src:roomDataUrl,alt:''});
 		$canvasWrap.prepend($bg);
-		$bg.on('load', function(){ placeProduct(); });
-		if ($bg[0].complete) placeProduct();
+		$bg.on('load',placeProduct);
+		if($bg[0].complete) placeProduct();
 	}
 
-	function placeProduct() {
+	function placeProduct(){
 		showSpinner(true);
-		var ww = $canvasWrap.width();
-		var wh = $canvasWrap.height() || $canvasWrap.find('.arrp-room-bg').height() || 400;
+		var ww=$canvasWrap.width();
+		var wh=$canvasWrap.height()||$canvasWrap.find('.arrp-room-bg').height()||400;
 
-		loadProductImage(productImgUrl, function(nw, nh) {
-			var pw = Math.round(ww * 0.25);
-			var ph = (nw && nh) ? Math.round(pw * nh / nw) : pw;
+		/* Use already-prepared (bg-removed) image */
+		var currentUrl = processedUrls[productImgUrl] || productImgUrl;
 
-			handle.w = pw;
-			handle.h = ph;
-			/* Smart placement: lower-centre of the room — where surfaces (table/floor) are */
-			handle.x = Math.round((ww - pw) / 2);
-			handle.y = Math.round(wh * 0.60 - ph / 2);
-			handle.y = clamp(handle.y, 0, wh - ph);
-			applyHandle();
-			updateShadow();
-			showSpinner(false);
-		});
-	}
-
-	function resetUpload() {
-		$stepPreview.hide(); $stepUpload.show();
-		$fileInput.val(''); $cameraInput.val('');
-		roomDataUrl = null;
-	}
-
-	/* ================================================================
-	   Colour switching — processes new image through bg removal
-	================================================================= */
-	function switchColour(url) {
-		if (!url) return;
-		productImgUrl = url;
-		if (!roomDataUrl) return;   // not in preview yet — just store URL
-		showSpinner(true);
-		loadProductImage(url, function(nw, nh) {
-			if (nw && nh) {
-				handle.h = Math.round(handle.w * nh / nw);
-				applyHandle();
-				updateShadow();
-			}
-			showSpinner(false);
-		});
-	}
-
-	/* ================================================================
-	   Shadow — oval below product to simulate surface placement
-	================================================================= */
-	function updateShadow() {
-		$shadow.css({
-			left:   (handle.x + handle.w * 0.1) + 'px',
-			top:    (handle.y + handle.h - 6)    + 'px',
-			width:  (handle.w * 0.8)             + 'px',
-			height: Math.round(handle.w * 0.08)  + 'px'
-		});
-	}
-
-	/* ================================================================
-	   Drag
-	================================================================= */
-	function startDrag(mx, my) {
-		drag.on=true; drag.mx=mx; drag.my=my; drag.sx=handle.x; drag.sy=handle.y;
-		$handle.addClass('arrp-active').css('cursor','grabbing');
-	}
-	function onMove(e) {
-		if (drag.on) {
-			var ww=$canvasWrap.width(), wh=$canvasWrap.height();
-			handle.x = clamp(drag.sx+(e.clientX-drag.mx), 0, ww-handle.w);
-			handle.y = clamp(drag.sy+(e.clientY-drag.my), 0, wh-handle.h);
+		var tmpImg = new Image();
+		tmpImg.onload = function(){
+			var nw=tmpImg.naturalWidth, nh=tmpImg.naturalHeight;
+			var pw=Math.round(ww*0.25);
+			var ph=(nw&&nh)?Math.round(pw*nh/nw):pw;
+			handle.w=pw; handle.h=ph;
+			handle.x=Math.round((ww-pw)/2);
+			handle.y=clamp(Math.round(wh*0.60-ph/2), 0, wh-ph);
 			applyHandle(); updateShadow();
-		}
-		if (rsz.on) doResize(e.clientX, e.clientY);
+			$productImg.attr('src', currentUrl);
+			showSpinner(false);
+			$dragHint.show();
+			setTimeout(function(){$dragHint.fadeOut(600);},3000);
+		};
+		tmpImg.onerror=function(){ showSpinner(false); };
+		tmpImg.src=currentUrl;
 	}
-	function onUp() {
-		if(drag.on){ drag.on=false; $handle.removeClass('arrp-active').css('cursor','grab'); }
-		if(rsz.on)   rsz.on=false;
+
+	function resetUpload(){
+		$stepPreview.hide();$stepUpload.show();
+		$fileInput.val('');$cameraInput.val('');
+		roomDataUrl=null;
 	}
 
 	/* ================================================================
-	   Resize
+	   Colour switching
 	================================================================= */
-	function startResize(mx,my,dir){
-		rsz.on=true; rsz.dir=dir; rsz.mx=mx; rsz.my=my;
-		rsz.sx=handle.x; rsz.sy=handle.y; rsz.sw=handle.w; rsz.sh=handle.h;
+	function switchColour(url){
+		if(!url) return;
+		productImgUrl=url;
+		if(!roomDataUrl) return;
+		showSpinner(true);
+		prepareImage(url,function(processed){
+			$productImg.attr('src',processed);
+			var tmp=new Image();
+			tmp.onload=function(){
+				var nw=tmp.naturalWidth,nh=tmp.naturalHeight;
+				if(nw&&nh){handle.h=Math.round(handle.w*nh/nw);applyHandle();updateShadow();}
+				showSpinner(false);
+			};
+			tmp.onerror=function(){showSpinner(false);};
+			tmp.src=processed;
+		});
 	}
-	function doResize(mx,my){
-		var dx=mx-rsz.mx, dy=my-rsz.my;
-		var x=rsz.sx,y=rsz.sy,w=rsz.sw,h=rsz.sh;
-		switch(rsz.dir){
-			case 'se': w=Math.max(MIN,w+dx); h=Math.max(MIN,h+dy); break;
-			case 'sw': w=Math.max(MIN,w-dx); h=Math.max(MIN,h+dy); x=rsz.sx+(rsz.sw-w); break;
-			case 'ne': w=Math.max(MIN,w+dx); h=Math.max(MIN,h-dy); y=rsz.sy+(rsz.sh-h); break;
-			case 'nw': w=Math.max(MIN,w-dx); h=Math.max(MIN,h-dy); x=rsz.sx+(rsz.sw-w); y=rsz.sy+(rsz.sh-h); break;
+
+	/* ================================================================
+	   Shadow
+	================================================================= */
+	function updateShadow(){
+		$shadow.css({
+			left  :(handle.x+handle.w*0.1)+'px',
+			top   :(handle.y+handle.h-4)+'px',
+			width :(handle.w*0.8)+'px',
+			height:Math.round(handle.w*0.08)+'px'
+		});
+	}
+
+	/* ================================================================
+	   Drag / Resize
+	================================================================= */
+	function startDrag(mx,my){drag.on=true;drag.mx=mx;drag.my=my;drag.sx=handle.x;drag.sy=handle.y;$handle.addClass('arrp-active').css('cursor','grabbing');}
+	function onMove(e){
+		if(drag.on){
+			var ww=$canvasWrap.width(),wh=$canvasWrap.height();
+			handle.x=clamp(drag.sx+(e.clientX-drag.mx),0,ww-handle.w);
+			handle.y=clamp(drag.sy+(e.clientY-drag.my),0,wh-handle.h);
+			applyHandle();updateShadow();
 		}
-		var ww=$canvasWrap.width(), wh=$canvasWrap.height();
-		handle.x=clamp(x,0,ww-MIN); handle.y=clamp(y,0,wh-MIN);
-		handle.w=Math.min(w,ww-handle.x); handle.h=Math.min(h,wh-handle.y);
-		applyHandle(); updateShadow();
+		if(rsz.on) doResize(e.clientX,e.clientY);
+	}
+	function onUp(){if(drag.on){drag.on=false;$handle.removeClass('arrp-active').css('cursor','grab');}if(rsz.on)rsz.on=false;}
+	function startResize(mx,my,dir){rsz.on=true;rsz.dir=dir;rsz.mx=mx;rsz.my=my;rsz.sx=handle.x;rsz.sy=handle.y;rsz.sw=handle.w;rsz.sh=handle.h;}
+	function doResize(mx,my){
+		var dx=mx-rsz.mx,dy=my-rsz.my,x=rsz.sx,y=rsz.sy,w=rsz.sw,h=rsz.sh;
+		switch(rsz.dir){
+			case'se':w=Math.max(MIN,w+dx);h=Math.max(MIN,h+dy);break;
+			case'sw':w=Math.max(MIN,w-dx);h=Math.max(MIN,h+dy);x=rsz.sx+(rsz.sw-w);break;
+			case'ne':w=Math.max(MIN,w+dx);h=Math.max(MIN,h-dy);y=rsz.sy+(rsz.sh-h);break;
+			case'nw':w=Math.max(MIN,w-dx);h=Math.max(MIN,h-dy);x=rsz.sx+(rsz.sw-w);y=rsz.sy+(rsz.sh-h);break;
+		}
+		var ww=$canvasWrap.width(),wh=$canvasWrap.height();
+		handle.x=clamp(x,0,ww-MIN);handle.y=clamp(y,0,wh-MIN);
+		handle.w=Math.min(w,ww-handle.x);handle.h=Math.min(h,wh-handle.y);
+		applyHandle();updateShadow();
 	}
 
 	/* ================================================================
 	   Save / Download
 	================================================================= */
 	function savePreview(){
-		if(!roomDataUrl||!ctx) return;
+		if(!roomDataUrl||!ctx)return;
 		showSpinner(true);
-		var scaleX = canvas.width  / $canvasWrap.width();
-		var scaleY = canvas.height / ($canvasWrap.height()||canvas.height);
-
+		var scX=canvas.width/$canvasWrap.width();
+		var scY=canvas.height/($canvasWrap.height()||canvas.height);
 		var room=new Image();
-		room.onload = function(){
+		room.onload=function(){
 			ctx.clearRect(0,0,canvas.width,canvas.height);
 			ctx.drawImage(room,0,0,canvas.width,canvas.height);
-
-			/* Draw shadow on canvas */
-			var sx = handle.x*scaleX + handle.w*scaleX*0.1;
-			var sy = (handle.y+handle.h)*scaleY - 4*scaleY;
-			var sw = handle.w*scaleX*0.8;
-			var sh = handle.w*scaleX*0.08;
-			var grd = ctx.createRadialGradient(sx+sw/2,sy+sh/2,0, sx+sw/2,sy+sh/2,sw/2);
-			grd.addColorStop(0,'rgba(0,0,0,0.4)');
-			grd.addColorStop(1,'rgba(0,0,0,0)');
-			ctx.fillStyle=grd;
-			ctx.beginPath();
-			ctx.ellipse(sx+sw/2, sy+sh/2, sw/2, sh/2, 0, 0, Math.PI*2);
-			ctx.fill();
-
-			var prod=new Image();
-			prod.crossOrigin='anonymous';
-			prod.onload=function(){
-				ctx.drawImage(prod, handle.x*scaleX, handle.y*scaleY, handle.w*scaleX, handle.h*scaleY);
-				doDownload();
-			};
-			prod.onerror=doDownload;
-			prod.src = processedProdUrl || productImgUrl;
+			/* shadow */
+			var sx=(handle.x+handle.w*0.1)*scX,sy=(handle.y+handle.h-4)*scY;
+			var sw=handle.w*0.8*scX,sh=handle.w*0.08*scX;
+			var g=ctx.createRadialGradient(sx+sw/2,sy+sh/2,0,sx+sw/2,sy+sh/2,sw/2);
+			g.addColorStop(0,'rgba(0,0,0,0.38)');g.addColorStop(1,'rgba(0,0,0,0)');
+			ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(sx+sw/2,sy+sh/2,sw/2,sh/2,0,0,Math.PI*2);ctx.fill();
+			/* product */
+			var prod=new Image();prod.crossOrigin='anonymous';
+			var src=$productImg.attr('src')||productImgUrl;
+			prod.onload=function(){ctx.drawImage(prod,handle.x*scX,handle.y*scY,handle.w*scX,handle.h*scY);doSave();};
+			prod.onerror=doSave;
+			prod.src=src;
 		};
-		room.src = roomDataUrl;
-
-		function doDownload(){
+		room.src=roomDataUrl;
+		function doSave(){
 			canvas.style.display='block';
-			var a=document.createElement('a');
-			a.download='room-preview.png'; a.href=canvas.toDataURL('image/png'); a.click();
-			canvas.style.display='none';
-			showSpinner(false);
+			var a=document.createElement('a');a.download='room-preview.png';a.href=canvas.toDataURL('image/png');a.click();
+			canvas.style.display='none';showSpinner(false);
 		}
 	}
 
 	/* ================================================================
 	   Helpers
 	================================================================= */
-	function applyHandle(){
-		$handle.css({ left:handle.x+'px',top:handle.y+'px',width:handle.w+'px',height:handle.h+'px' });
-	}
-	function showSpinner(show){
-		$canvasWrap.find('.arrp-loading').remove();
-		if(show) $canvasWrap.append('<div class="arrp-loading"><div class="arrp-spinner"></div></div>');
-	}
-	function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+	function applyHandle(){$handle.css({left:handle.x+'px',top:handle.y+'px',width:handle.w+'px',height:handle.h+'px'});}
+	function showSpinner(s){$canvasWrap.find('.arrp-loading').remove();if(s)$canvasWrap.append('<div class="arrp-loading"><div class="arrp-spinner"></div></div>');}
+	function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
 
-	var HEX_MAP={
-		red:'#e53935',blue:'#1e88e5',green:'#43a047',yellow:'#fdd835',orange:'#fb8c00',
-		purple:'#8e24aa',pink:'#e91e63',brown:'#6d4c41',black:'#212121',white:'#f5f5f5',
-		grey:'#9e9e9e',gray:'#9e9e9e',beige:'#d7ccc8',navy:'#1a237e',teal:'#00897b',
-		gold:'#ffc107',silver:'#bdbdbd',cream:'#fff8e1',maroon:'#880e4f',olive:'#827717',
-		coral:'#ff7043',cyan:'#00bcd4',indigo:'#3949ab',khaki:'#c8b560',
-		'dark blue':'#1565c0','light blue':'#64b5f6','dark green':'#2e7d32',
-		rose:'#e91e63',mustard:'#f9a825',charcoal:'#37474f'
-	};
-	function labelToHex(label){
-		var l=label.toLowerCase().replace(/-/g,' ');
-		for(var k in HEX_MAP){ if(l.indexOf(k)!==-1) return HEX_MAP[k]; }
-		var h=0; for(var i=0;i<l.length;i++) h=(h*31+l.charCodeAt(i))&0xffffff;
-		return '#'+('000000'+h.toString(16)).slice(-6);
-	}
+	var HM={red:'#e53935',blue:'#1e88e5',green:'#43a047',yellow:'#fdd835',orange:'#fb8c00',purple:'#8e24aa',pink:'#e91e63',brown:'#6d4c41',black:'#212121',white:'#f5f5f5',grey:'#9e9e9e',gray:'#9e9e9e',beige:'#d7ccc8',navy:'#1a237e',teal:'#00897b',gold:'#ffc107',silver:'#bdbdbd',cream:'#fff8e1',maroon:'#880e4f',olive:'#827717',coral:'#ff7043',cyan:'#00bcd4',indigo:'#3949ab',khaki:'#c8b560','dark blue':'#1565c0','light blue':'#64b5f6',rose:'#e91e63',mustard:'#f9a825',charcoal:'#37474f'};
+	function toHex(l){var s=l.toLowerCase().replace(/-/g,' ');for(var k in HM)if(s.indexOf(k)!==-1)return HM[k];var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))&0xffffff;return '#'+('000000'+h.toString(16)).slice(-6);}
 
 }(jQuery));
