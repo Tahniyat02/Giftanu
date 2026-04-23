@@ -164,19 +164,28 @@
 	border-radius: 4px;
 	box-sizing: border-box;
 	transition: border-color .15s;
+	z-index: 2;
 }
 .arrp-product-handle:hover,
 .arrp-product-handle.arrp-active { border-color: rgba(255,255,255,.8); }
 
-/* ── KEY FIX: remove white background from product image ── */
+/* Product image — background removed via JS canvas processing */
 .arrp-product-handle img {
 	display: block;
 	width: 100%; height: 100%;
 	object-fit: contain;
 	pointer-events: none;
 	border-radius: 2px;
-	mix-blend-mode: multiply;   /* white bg becomes transparent */
-	filter: drop-shadow(0 4px 12px rgba(0,0,0,.35));
+}
+
+/* ── Oval shadow under product (simulates surface placement) ── */
+.arrp-product-shadow {
+	position: absolute;
+	border-radius: 50%;
+	background: radial-gradient(ellipse at center, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0) 70%);
+	pointer-events: none;
+	z-index: 1;
+	transform: scaleY(0.4);
 }
 
 /* ── Resize handles ── */

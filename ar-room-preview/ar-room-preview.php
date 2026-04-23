@@ -85,6 +85,8 @@ function arrp_modal() {
 
 				<div class="arrp-canvas-wrap">
 					<canvas id="arrp-canvas" style="display:none;"></canvas>
+					<!-- oval shadow sits under the product to simulate surface placement -->
+					<div id="arrp-product-shadow" class="arrp-product-shadow"></div>
 					<div id="arrp-product-handle" class="arrp-product-handle">
 						<img id="arrp-product-img" src="" alt="" draggable="false">
 						<div class="arrp-resize-handle arrp-resize-se" data-dir="se"></div>
@@ -92,7 +94,7 @@ function arrp_modal() {
 						<div class="arrp-resize-handle arrp-resize-ne" data-dir="ne"></div>
 						<div class="arrp-resize-handle arrp-resize-nw" data-dir="nw"></div>
 					</div>
-					<div class="arrp-drag-hint">Drag to move &nbsp;·&nbsp; Corner handles to resize</div>
+					<div class="arrp-drag-hint">Drag to move &nbsp;&middot;&nbsp; Corners to resize</div>
 				</div>
 
 				<!-- Colour swatches -->
