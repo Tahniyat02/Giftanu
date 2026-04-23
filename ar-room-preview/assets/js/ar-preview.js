@@ -1,112 +1,116 @@
 (function ($) {
 	'use strict';
 
-	/* ---- state ---- */
-	var roomDataUrl  = null;
+	/* ── state ── */
+	var roomDataUrl   = null;
+	var roomNatW      = 0, roomNatH = 0;
 	var productImgUrl = (window.ARRP && ARRP.productImageUrl) ? ARRP.productImageUrl : '';
-	var handle = { x: 0, y: 0, w: 0, h: 0 };
-	var drag   = { on: false, mx: 0, my: 0, sx: 0, sy: 0 };
-	var rsz    = { on: false, dir: '', mx: 0, my: 0, sx: 0, sy: 0, sw: 0, sh: 0 };
-	var MIN    = 40;
+	var handle        = { x:0, y:0, w:0, h:0 };
+	var drag          = { on:false, mx:0, my:0, sx:0, sy:0 };
+	var rsz           = { on:false, dir:'', mx:0, my:0, sx:0, sy:0, sw:0, sh:0 };
+	var MIN           = 40;
+	var hintHidden    = false;
 
-	/* ---- dom ---- */
+	/* ── dom ── */
 	var $modal, $overlay, $openBtn, $closeBtn,
 	    $stepUpload, $stepPreview,
-	    $uploadArea, $fileInput,
+	    $fileInput, $cameraInput,
 	    $canvasWrap, canvas, ctx,
 	    $handle, $productImg,
 	    $swatchesWrap, $swatches,
-	    $resetBtn, $downloadBtn;
+	    $resetBtn, $downloadBtn, $dragHint;
 
 	$(function () {
-		$modal       = $('#arrp-modal');
-		$overlay     = $('#arrp-overlay');
-		$openBtn     = $('#arrp-open-btn');
-		$closeBtn    = $('#arrp-close-btn');
-		$stepUpload  = $('#arrp-step-upload');
-		$stepPreview = $('#arrp-step-preview');
-		$uploadArea  = $('#arrp-upload-area');
-		$fileInput   = $('#arrp-file-input');
-		$canvasWrap  = $('.arrp-canvas-wrap');
-		canvas       = document.getElementById('arrp-canvas');
-		ctx          = canvas ? canvas.getContext('2d') : null;
-		$handle      = $('#arrp-product-handle');
-		$productImg  = $('#arrp-product-img');
+		$modal        = $('#arrp-modal');
+		$overlay      = $('#arrp-overlay');
+		$openBtn      = $('#arrp-open-btn');
+		$closeBtn     = $('#arrp-close-btn');
+		$stepUpload   = $('#arrp-step-upload');
+		$stepPreview  = $('#arrp-step-preview');
+		$fileInput    = $('#arrp-file-input');
+		$cameraInput  = $('#arrp-camera-input');
+		$canvasWrap   = $('.arrp-canvas-wrap');
+		canvas        = document.getElementById('arrp-canvas');
+		ctx           = canvas ? canvas.getContext('2d') : null;
+		$handle       = $('#arrp-product-handle');
+		$productImg   = $('#arrp-product-img');
 		$swatchesWrap = $('#arrp-swatches-wrap');
-		$swatches    = $('#arrp-swatches');
-		$resetBtn    = $('#arrp-reset-btn');
-		$downloadBtn = $('#arrp-download-btn');
+		$swatches     = $('#arrp-swatches');
+		$resetBtn     = $('#arrp-reset-btn');
+		$downloadBtn  = $('#arrp-download-btn');
+		$dragHint     = $('.arrp-drag-hint');
 
-		if ( ! $modal.length ) return;
+		if (!$modal.length) return;
 
 		bindEvents();
-		readSwatchesFromPage();
+		readSwatches();
 	});
 
 	/* ================================================================
-	   Read variation data that WooCommerce already outputs on the page
+	   Read WooCommerce variation data already on the page
 	================================================================= */
-	function readSwatchesFromPage() {
-		// WooCommerce outputs variation JSON in .variations_form[data-product_variations]
+	function readSwatches() {
 		var $form = $('form.variations_form');
-		if ( ! $form.length ) return;
+		if (!$form.length) return;
 
 		var raw = $form.attr('data-product_variations');
-		if ( ! raw || raw === 'false' ) return;
+		if (!raw || raw === 'false') return;
 
 		var variations;
-		try { variations = JSON.parse( raw ); } catch(e) { return; }
-		if ( ! variations || ! variations.length ) return;
+		try { variations = JSON.parse(raw); } catch(e) { return; }
+		if (!variations || !variations.length) return;
 
-		// Find the colour attribute key
-		var attrKeys = Object.keys( variations[0].attributes || {} );
-		var colorKey = attrKeys.find(function(k){
-			return /colou?r|rang/i.test(k);
-		}) || attrKeys[0];
+		/* Find the colour attribute key */
+		var attrKeys = Object.keys(variations[0].attributes || {});
+		var colorKey = null;
+		for (var i = 0; i < attrKeys.length; i++) {
+			if (/colou?r|rang/i.test(attrKeys[i])) { colorKey = attrKeys[i]; break; }
+		}
+		if (!colorKey) colorKey = attrKeys[0];
+		if (!colorKey) return;
 
-		if ( ! colorKey ) return;
+		var seen = [], swatchData = [];
 
-		var seen = [];
-		var swatchData = [];
-
-		variations.forEach(function(v){
-			var val = v.attributes[ colorKey ];
-			if ( ! val || seen.indexOf(val) !== -1 ) return;
+		variations.forEach(function(v) {
+			var val = v.attributes[colorKey];
+			if (!val || seen.indexOf(val) !== -1) return;
 			seen.push(val);
 
-			var imgUrl = (v.image && v.image.full_src) ? v.image.full_src
-			           : (v.image && v.image.src)      ? v.image.src
-			           : productImgUrl;
+			/* Best available image for this variation */
+			var imgUrl = '';
+			if (v.image) {
+				imgUrl = v.image.full_src || v.image.src || '';
+			}
+			if (!imgUrl) imgUrl = productImgUrl;
 
 			swatchData.push({
-				label : val.replace(/-/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}),
+				label : val.replace(/-/g,' ').replace(/\b\w/g, function(c){return c.toUpperCase();}),
 				value : val,
 				imgUrl: imgUrl,
 				hex   : labelToHex(val)
 			});
 		});
 
-		if ( ! swatchData.length ) return;
+		if (!swatchData.length) return;
 
 		$swatchesWrap.show();
 		$swatches.empty();
 
-		swatchData.forEach(function(s, i){
-			var $el = $('<div class="arrp-swatch" tabindex="0" role="button">')
-				.attr('aria-label', s.label);
+		swatchData.forEach(function(s, i) {
+			var $el     = $('<div class="arrp-swatch" tabindex="0" role="button">').attr('aria-label', s.label);
 			var $circle = $('<div class="arrp-swatch-circle">').css('background', s.hex);
 			var $name   = $('<span class="arrp-swatch-name">').text(s.label);
 			$el.append($circle, $name).data('swatch', s);
 
-			$el.on('click keydown', function(e){
-				if (e.type==='keydown' && e.key!=='Enter' && e.key!==' ') return;
+			$el.on('click keydown', function(e) {
+				if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
 				$swatches.find('.arrp-swatch').removeClass('arrp-swatch-active');
 				$el.addClass('arrp-swatch-active');
 				changeProductImage(s.imgUrl);
 			});
 
 			$swatches.append($el);
-			if (i === 0) { $el.trigger('click'); }
+			if (i === 0) $el.trigger('click');
 		});
 	}
 
@@ -119,42 +123,41 @@
 		$overlay.on('click', closeModal);
 		$(document).on('keydown', function(e){ if(e.key==='Escape') closeModal(); });
 
-		$fileInput.on('change', function(){ if(this.files[0]) readFile(this.files[0]); });
+		/* File inputs */
+		$fileInput.on('change',   function(){ if(this.files[0]) readFile(this.files[0]); });
+		$cameraInput.on('change', function(){ if(this.files[0]) readFile(this.files[0]); });
 
-		$uploadArea
-			.on('dragover dragenter', function(e){
-				e.preventDefault();
-				$(this).addClass('arrp-drag-over');
-			})
-			.on('dragleave', function(){ $(this).removeClass('arrp-drag-over'); })
+		/* Drag-and-drop on upload area */
+		$('#arrp-upload-area')
+			.on('dragover dragenter', function(e){ e.preventDefault(); $(this).css('border-color','#1a1a1a'); })
+			.on('dragleave',          function()  { $(this).css('border-color',''); })
 			.on('drop', function(e){
-				e.preventDefault();
-				$(this).removeClass('arrp-drag-over');
-				var files = e.originalEvent.dataTransfer.files;
-				if(files && files[0]) readFile(files[0]);
+				e.preventDefault(); $(this).css('border-color','');
+				var f = e.originalEvent.dataTransfer.files[0];
+				if(f) readFile(f);
 			});
 
-		$resetBtn.on('click', resetUpload);
+		$resetBtn.on('click',    resetUpload);
 		$downloadBtn.on('click', savePreview);
 
-		// Drag — mouse
+		/* Drag — mouse */
 		$handle.on('mousedown', function(e){
-			if ($(e.target).hasClass('arrp-resize-handle')) return;
+			if($(e.target).hasClass('arrp-resize-handle')) return;
 			startDrag(e.clientX, e.clientY); e.preventDefault();
 		});
-		// Drag — touch
+		/* Drag — touch */
 		$handle.on('touchstart', function(e){
-			if ($(e.target).hasClass('arrp-resize-handle')) return;
-			var t=e.originalEvent.touches[0]; startDrag(t.clientX, t.clientY); e.preventDefault();
+			if($(e.target).hasClass('arrp-resize-handle')) return;
+			var t=e.originalEvent.touches[0]; startDrag(t.clientX,t.clientY); e.preventDefault();
 		},{passive:false});
 
-		// Resize — mouse
+		/* Resize — mouse */
 		$handle.on('mousedown', '.arrp-resize-handle', function(e){
-			startResize(e.clientX, e.clientY, $(this).data('dir')); e.stopPropagation(); e.preventDefault();
+			startResize(e.clientX,e.clientY,$(this).data('dir')); e.stopPropagation(); e.preventDefault();
 		});
-		// Resize — touch
+		/* Resize — touch */
 		$handle.on('touchstart', '.arrp-resize-handle', function(e){
-			var t=e.originalEvent.touches[0]; startResize(t.clientX, t.clientY, $(this).data('dir'));
+			var t=e.originalEvent.touches[0]; startResize(t.clientX,t.clientY,$(this).data('dir'));
 			e.stopPropagation(); e.preventDefault();
 		},{passive:false});
 
@@ -175,19 +178,20 @@
 	function closeModal() { $modal.hide(); $('body').css('overflow',''); }
 
 	/* ================================================================
-	   File / room photo
+	   File reading & room display
 	================================================================= */
 	function readFile(file) {
 		if (!file || !file.type.match('image.*')) return;
 		if (file.size > 10*1024*1024) { alert('Image must be under 10 MB.'); return; }
 		showSpinner(true);
 		var reader = new FileReader();
-		reader.onload = function(ev){
+		reader.onload = function(ev) {
 			var img = new Image();
-			img.onload = function(){
+			img.onload = function() {
 				roomDataUrl = ev.target.result;
-				canvas.width  = img.naturalWidth;
-				canvas.height = img.naturalHeight;
+				roomNatW    = img.naturalWidth;
+				roomNatH    = img.naturalHeight;
+				if(canvas){ canvas.width = roomNatW; canvas.height = roomNatH; }
 				showPreview();
 				showSpinner(false);
 			};
@@ -200,37 +204,66 @@
 		$stepUpload.hide();
 		$stepPreview.show();
 		$canvasWrap.find('.arrp-room-bg').remove();
-		var $bg = $('<img class="arrp-room-bg">').attr('src', roomDataUrl);
+		var $bg = $('<img class="arrp-room-bg">').attr({ src: roomDataUrl, alt: '' });
 		$canvasWrap.prepend($bg);
 
-		$bg.on('load', placeProduct);
-		if ($bg[0].complete) placeProduct();
+		$bg.on('load', smartPlaceProduct);
+		if ($bg[0].complete) smartPlaceProduct();
 	}
 
-	function placeProduct() {
+	/* ── Smart placement: bottom-centre of the room image ── */
+	function smartPlaceProduct() {
 		var ww = $canvasWrap.width();
 		var wh = $canvasWrap.height() || $canvasWrap.find('.arrp-room-bg').height() || 400;
-		var pw = Math.round(ww * 0.28);
-		handle.w = pw; handle.h = pw;
+
+		var pw = Math.round(ww * 0.26);    // 26% of room width
+		var ph = pw;                        // square start
+
+		/* Adjust height to product aspect ratio if image already loaded */
+		var pImg = $productImg[0];
+		if (pImg && pImg.naturalWidth && pImg.naturalHeight) {
+			ph = Math.round(pw * pImg.naturalHeight / pImg.naturalWidth);
+		}
+
+		/* Place at bottom-centre — simulates product sitting on a surface */
+		handle.w = pw;
+		handle.h = ph;
 		handle.x = Math.round((ww - pw) / 2);
-		handle.y = Math.round((wh - pw) / 2);
+		handle.y = Math.round(wh * 0.62 - ph / 2);   // ~62% down = lower third
+		handle.y = Math.max(0, Math.min(handle.y, wh - ph));
+
 		applyHandle();
 
-		$productImg.attr('src', productImgUrl).on('load', function(){
+		/* Load product image if not yet loaded */
+		$productImg.attr('src', productImgUrl);
+		$productImg.off('load.arrp').on('load.arrp', function(){
 			var nw=this.naturalWidth, nh=this.naturalHeight;
-			if(nw&&nh){ handle.h=Math.round(handle.w*(nh/nw)); applyHandle(); }
+			if(nw && nh){
+				handle.h = Math.round(handle.w * nh / nw);
+				handle.y = Math.round(wh * 0.62 - handle.h / 2);
+				handle.y = Math.max(0, Math.min(handle.y, wh - handle.h));
+				applyHandle();
+			}
 		});
+
+		/* Auto-hide drag hint after first drag */
+		hintHidden = false;
+		$dragHint.removeClass('arrp-hint-hide');
 	}
 
 	function resetUpload() {
-		$stepPreview.hide(); $stepUpload.show();
-		$fileInput.val(''); roomDataUrl=null;
+		$stepPreview.hide();
+		$stepUpload.show();
+		$fileInput.val('');
+		$cameraInput.val('');
+		roomDataUrl = null;
 	}
 
 	/* ================================================================
-	   Colour change
+	   Colour switching
 	================================================================= */
 	function changeProductImage(url) {
+		if (!url || url === productImgUrl) return;
 		showSpinner(true);
 		var img = new Image();
 		img.crossOrigin = 'anonymous';
@@ -238,7 +271,7 @@
 			productImgUrl = url;
 			$productImg.attr('src', url);
 			var nw=img.naturalWidth, nh=img.naturalHeight;
-			if(nw&&nh){ handle.h=Math.round(handle.w*(nh/nw)); applyHandle(); }
+			if(nw && nh){ handle.h = Math.round(handle.w * nh / nw); applyHandle(); }
 			showSpinner(false);
 		};
 		img.onerror = function(){ showSpinner(false); };
@@ -248,20 +281,21 @@
 	/* ================================================================
 	   Drag
 	================================================================= */
-	function startDrag(mx,my){
+	function startDrag(mx, my) {
 		drag.on=true; drag.mx=mx; drag.my=my; drag.sx=handle.x; drag.sy=handle.y;
 		$handle.addClass('arrp-active').css('cursor','grabbing');
+		if(!hintHidden){ $dragHint.addClass('arrp-hint-hide'); hintHidden=true; }
 	}
-	function onMove(e){
-		if(drag.on){
+	function onMove(e) {
+		if (drag.on) {
 			var ww=$canvasWrap.width(), wh=$canvasWrap.height();
 			handle.x = clamp(drag.sx+(e.clientX-drag.mx), 0, ww-handle.w);
 			handle.y = clamp(drag.sy+(e.clientY-drag.my), 0, wh-handle.h);
 			applyHandle();
 		}
-		if(rsz.on) doResize(e.clientX, e.clientY);
+		if (rsz.on) doResize(e.clientX, e.clientY);
 	}
-	function onUp(){
+	function onUp() {
 		if(drag.on){ drag.on=false; $handle.removeClass('arrp-active').css('cursor','grab'); }
 		if(rsz.on)   rsz.on=false;
 	}
@@ -277,10 +311,10 @@
 		var dx=mx-rsz.mx, dy=my-rsz.my;
 		var x=rsz.sx, y=rsz.sy, w=rsz.sw, h=rsz.sh;
 		switch(rsz.dir){
-			case'se': w=Math.max(MIN,w+dx); h=Math.max(MIN,h+dy); break;
-			case'sw': w=Math.max(MIN,w-dx); h=Math.max(MIN,h+dy); x=rsz.sx+(rsz.sw-w); break;
-			case'ne': w=Math.max(MIN,w+dx); h=Math.max(MIN,h-dy); y=rsz.sy+(rsz.sh-h); break;
-			case'nw': w=Math.max(MIN,w-dx); h=Math.max(MIN,h-dy); x=rsz.sx+(rsz.sw-w); y=rsz.sy+(rsz.sh-h); break;
+			case 'se': w=Math.max(MIN,w+dx); h=Math.max(MIN,h+dy); break;
+			case 'sw': w=Math.max(MIN,w-dx); h=Math.max(MIN,h+dy); x=rsz.sx+(rsz.sw-w); break;
+			case 'ne': w=Math.max(MIN,w+dx); h=Math.max(MIN,h-dy); y=rsz.sy+(rsz.sh-h); break;
+			case 'nw': w=Math.max(MIN,w-dx); h=Math.max(MIN,h-dy); x=rsz.sx+(rsz.sw-w); y=rsz.sy+(rsz.sh-h); break;
 		}
 		var ww=$canvasWrap.width(), wh=$canvasWrap.height();
 		handle.x=clamp(x,0,ww-MIN); handle.y=clamp(y,0,wh-MIN);
@@ -289,34 +323,44 @@
 	}
 
 	/* ================================================================
-	   Save preview
+	   Save preview to PNG
 	================================================================= */
 	function savePreview(){
-		if(!roomDataUrl) return;
+		if(!roomDataUrl || !ctx) return;
 		showSpinner(true);
 		var scaleX = canvas.width  / $canvasWrap.width();
-		var scaleY = canvas.height / ($canvasWrap.height()||canvas.height);
-		var room=new Image(), prod=new Image();
-		room.onload=function(){
+		var scaleY = canvas.height / ($canvasWrap.height() || canvas.height);
+
+		var room = new Image();
+		room.onload = function(){
 			ctx.clearRect(0,0,canvas.width,canvas.height);
 			ctx.drawImage(room,0,0,canvas.width,canvas.height);
-			prod.crossOrigin='anonymous';
-			prod.onload=function(){
+
+			var prod = new Image();
+			prod.crossOrigin = 'anonymous';
+			prod.onload = function(){
+				/* Draw product without mix-blend-mode on canvas (canvas uses globalCompositeOperation) */
+				ctx.save();
+				ctx.globalCompositeOperation = 'multiply';
 				ctx.drawImage(prod,
 					handle.x*scaleX, handle.y*scaleY,
 					handle.w*scaleX, handle.h*scaleY);
+				ctx.restore();
 				doDownload();
 			};
-			prod.onerror=doDownload;
-			prod.src=productImgUrl;
+			prod.onerror = doDownload;
+			prod.src = productImgUrl;
 		};
-		room.src=roomDataUrl;
+		room.src = roomDataUrl;
 
 		function doDownload(){
-			var a=document.createElement('a');
-			a.download='room-preview.png';
-			a.href=canvas.toDataURL('image/png');
-			a.click(); showSpinner(false);
+			canvas.style.display = 'block';
+			var a = document.createElement('a');
+			a.download = 'room-preview.png';
+			a.href = canvas.toDataURL('image/png');
+			a.click();
+			canvas.style.display = 'none';
+			showSpinner(false);
 		}
 	}
 
@@ -324,7 +368,7 @@
 	   Helpers
 	================================================================= */
 	function applyHandle(){
-		$handle.css({left:handle.x+'px',top:handle.y+'px',width:handle.w+'px',height:handle.h+'px'});
+		$handle.css({ left:handle.x+'px', top:handle.y+'px', width:handle.w+'px', height:handle.h+'px' });
 	}
 	function showSpinner(show){
 		$canvasWrap.find('.arrp-loading').remove();
@@ -332,16 +376,19 @@
 	}
 	function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 
-	var COLOUR_MAP = {
-		red:'#e53935',blue:'#1e88e5',green:'#43a047',yellow:'#fdd835',orange:'#fb8c00',
-		purple:'#8e24aa',pink:'#e91e63',brown:'#6d4c41',black:'#212121',white:'#f5f5f5',
-		grey:'#9e9e9e',gray:'#9e9e9e',beige:'#d7ccc8',navy:'#1a237e',teal:'#00897b',
-		gold:'#ffc107',silver:'#bdbdbd',cream:'#fff8e1',maroon:'#880e4f',olive:'#827717',
-		coral:'#ff7043',cyan:'#00bcd4',indigo:'#3949ab',khaki:'#c8b560'
+	var HEX_MAP = {
+		red:'#e53935', blue:'#1e88e5', green:'#43a047', yellow:'#fdd835',
+		orange:'#fb8c00', purple:'#8e24aa', pink:'#e91e63', brown:'#6d4c41',
+		black:'#212121', white:'#f5f5f5', grey:'#9e9e9e', gray:'#9e9e9e',
+		beige:'#d7ccc8', navy:'#1a237e', teal:'#00897b', gold:'#ffc107',
+		silver:'#bdbdbd', cream:'#fff8e1', maroon:'#880e4f', olive:'#827717',
+		coral:'#ff7043', cyan:'#00bcd4', indigo:'#3949ab', khaki:'#c8b560',
+		'dark blue':'#1565c0', 'light blue':'#64b5f6', 'sky blue':'#29b6f6',
+		'rose':'#e91e63', 'mustard':'#f9a825', 'charcoal':'#37474f'
 	};
 	function labelToHex(label){
-		var l=label.toLowerCase();
-		for(var k in COLOUR_MAP){ if(l.indexOf(k)!==-1) return COLOUR_MAP[k]; }
+		var l = label.toLowerCase().replace(/-/g,' ');
+		for(var k in HEX_MAP){ if(l.indexOf(k)!==-1) return HEX_MAP[k]; }
 		var h=0; for(var i=0;i<l.length;i++) h=(h*31+l.charCodeAt(i))&0xffffff;
 		return '#'+('000000'+h.toString(16)).slice(-6);
 	}
